@@ -3,12 +3,12 @@ Feature: User having a conversation regarding a note
   so that trainers can improve the content and I can learn more about the topic.
 
   Scenario: Users can see the conversation regarding a note in a bazaar
-    Given I am logged in as "old_learner"
-    And there is a certified notebook "Rocket Science" by "a_trainer" with 2 questions, shared to the Bazaar
-    When I start a conversation about the note "Rocket Science" with a message "Hi"
-    Then "a_trainer" can see the conversation with "Old Learner" for the note "Rocket Science" in the message center
+    Given there is a notebook with head note "Rocket Science" from user "a_trainer" shared to the Bazaar
+    When I am logged in as "old_learner"
+    And I start a conversation about the note "Rocket Science" with a message "Hi"
+    Then "a_trainer" can see the conversation with "Old Learner" for the topic "Rocket Science" in the message center
     And I can see the message "Hi" in the conversation with "Old Learner"
-    And "old_learner" can see the conversation with "A Trainer" for the note "Rocket Science" in the message center
+    And "old_learner" can see the conversation with "A Trainer" for the topic "Rocket Science" in the message center
     And I can see the message "Hi" in the conversation with "A Trainer"
 
   Scenario: Users can see the conversation regarding a note in a circle
