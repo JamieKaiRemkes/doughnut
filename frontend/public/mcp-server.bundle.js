@@ -4058,22 +4058,24 @@ var z = /* @__PURE__ */ Object.freeze({
   ZodError
 });
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/types.js
-var LATEST_PROTOCOL_VERSION = "2024-11-05";
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/types.js
+var LATEST_PROTOCOL_VERSION = "2025-03-26";
 var SUPPORTED_PROTOCOL_VERSIONS = [
   LATEST_PROTOCOL_VERSION,
+  "2024-11-05",
   "2024-10-07"
 ];
 var JSONRPC_VERSION = "2.0";
 var ProgressTokenSchema = z.union([z.string(), z.number().int()]);
 var CursorSchema = z.string();
+var RequestMetaSchema = z.object({
+  /**
+   * If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
+   */
+  progressToken: z.optional(ProgressTokenSchema)
+}).passthrough();
 var BaseRequestParamsSchema = z.object({
-  _meta: z.optional(z.object({
-    /**
-     * If specified, the caller is requesting out-of-band progress notifications for this request (as represented by notifications/progress). The value of this parameter is an opaque token that will be attached to any subsequent notifications. The receiver is not obligated to provide these notifications.
-     */
-    progressToken: z.optional(ProgressTokenSchema)
-  }).passthrough())
+  _meta: z.optional(RequestMetaSchema)
 }).passthrough();
 var RequestSchema = z.object({
   method: z.string(),
@@ -4100,18 +4102,21 @@ var JSONRPCRequestSchema = z.object({
   jsonrpc: z.literal(JSONRPC_VERSION),
   id: RequestIdSchema
 }).merge(RequestSchema).strict();
+var isJSONRPCRequest = (value) => JSONRPCRequestSchema.safeParse(value).success;
 var JSONRPCNotificationSchema = z.object({
   jsonrpc: z.literal(JSONRPC_VERSION)
 }).merge(NotificationSchema).strict();
+var isJSONRPCNotification = (value) => JSONRPCNotificationSchema.safeParse(value).success;
 var JSONRPCResponseSchema = z.object({
   jsonrpc: z.literal(JSONRPC_VERSION),
   id: RequestIdSchema,
   result: ResultSchema
 }).strict();
+var isJSONRPCResponse = (value) => JSONRPCResponseSchema.safeParse(value).success;
 var ErrorCode;
 (function(ErrorCode2) {
-  ErrorCode2[ErrorCode2["ConnectionClosed"] = -1] = "ConnectionClosed";
-  ErrorCode2[ErrorCode2["RequestTimeout"] = -2] = "RequestTimeout";
+  ErrorCode2[ErrorCode2["ConnectionClosed"] = -32e3] = "ConnectionClosed";
+  ErrorCode2[ErrorCode2["RequestTimeout"] = -32001] = "RequestTimeout";
   ErrorCode2[ErrorCode2["ParseError"] = -32700] = "ParseError";
   ErrorCode2[ErrorCode2["InvalidRequest"] = -32600] = "InvalidRequest";
   ErrorCode2[ErrorCode2["MethodNotFound"] = -32601] = "MethodNotFound";
@@ -4136,6 +4141,7 @@ var JSONRPCErrorSchema = z.object({
     data: z.optional(z.unknown())
   })
 }).strict();
+var isJSONRPCError = (value) => JSONRPCErrorSchema.safeParse(value).success;
 var JSONRPCMessageSchema = z.union([
   JSONRPCRequestSchema,
   JSONRPCNotificationSchema,
@@ -4202,6 +4208,10 @@ var ServerCapabilitiesSchema = z.object({
    */
   logging: z.optional(z.object({}).passthrough()),
   /**
+   * Present if the server supports sending completions to the client.
+   */
+  completions: z.optional(z.object({}).passthrough()),
+  /**
    * Present if the server offers any prompt templates.
    */
   prompts: z.optional(z.object({
@@ -4239,7 +4249,13 @@ var InitializeResultSchema = ResultSchema.extend({
    */
   protocolVersion: z.string(),
   capabilities: ServerCapabilitiesSchema,
-  serverInfo: ImplementationSchema
+  serverInfo: ImplementationSchema,
+  /**
+   * Instructions describing how to use the server and its features.
+   *
+   * This can be used by clients to improve the LLM's understanding of available tools, resources, etc. It can be thought of like a "hint" to the model. For example, this information MAY be added to the system prompt.
+   */
+  instructions: z.optional(z.string())
 });
 var InitializedNotificationSchema = NotificationSchema.extend({
   method: z.literal("notifications/initialized")
@@ -4467,6 +4483,17 @@ var ImageContentSchema = z.object({
    */
   mimeType: z.string()
 }).passthrough();
+var AudioContentSchema = z.object({
+  type: z.literal("audio"),
+  /**
+   * The base64-encoded audio data.
+   */
+  data: z.string().base64(),
+  /**
+   * The MIME type of the audio. Different providers may support different audio types.
+   */
+  mimeType: z.string()
+}).passthrough();
 var EmbeddedResourceSchema = z.object({
   type: z.literal("resource"),
   resource: z.union([TextResourceContentsSchema, BlobResourceContentsSchema])
@@ -4476,6 +4503,7 @@ var PromptMessageSchema = z.object({
   content: z.union([
     TextContentSchema,
     ImageContentSchema,
+    AudioContentSchema,
     EmbeddedResourceSchema
   ])
 }).passthrough();
@@ -4489,6 +4517,45 @@ var GetPromptResultSchema = ResultSchema.extend({
 var PromptListChangedNotificationSchema = NotificationSchema.extend({
   method: z.literal("notifications/prompts/list_changed")
 });
+var ToolAnnotationsSchema = z.object({
+  /**
+   * A human-readable title for the tool.
+   */
+  title: z.optional(z.string()),
+  /**
+   * If true, the tool does not modify its environment.
+   *
+   * Default: false
+   */
+  readOnlyHint: z.optional(z.boolean()),
+  /**
+   * If true, the tool may perform destructive updates to its environment.
+   * If false, the tool performs only additive updates.
+   *
+   * (This property is meaningful only when `readOnlyHint == false`)
+   *
+   * Default: true
+   */
+  destructiveHint: z.optional(z.boolean()),
+  /**
+   * If true, calling the tool repeatedly with the same arguments
+   * will have no additional effect on the its environment.
+   *
+   * (This property is meaningful only when `readOnlyHint == false`)
+   *
+   * Default: false
+   */
+  idempotentHint: z.optional(z.boolean()),
+  /**
+   * If true, this tool may interact with an "open world" of external
+   * entities. If false, the tool's domain of interaction is closed.
+   * For example, the world of a web search tool is open, whereas that
+   * of a memory tool is not.
+   *
+   * Default: true
+   */
+  openWorldHint: z.optional(z.boolean())
+}).passthrough();
 var ToolSchema = z.object({
   /**
    * The name of the tool.
@@ -4503,8 +4570,24 @@ var ToolSchema = z.object({
    */
   inputSchema: z.object({
     type: z.literal("object"),
-    properties: z.optional(z.object({}).passthrough())
-  }).passthrough()
+    properties: z.optional(z.object({}).passthrough()),
+    required: z.optional(z.array(z.string()))
+  }).passthrough(),
+  /**
+   * An optional JSON Schema object defining the structure of the tool's output.
+   *
+   * If set, a CallToolResult for this Tool MUST contain a structuredContent field whose contents validate against this schema.
+   * If not set, a CallToolResult for this Tool MUST NOT contain a structuredContent field and MUST contain a content field.
+   */
+  outputSchema: z.optional(z.object({
+    type: z.literal("object"),
+    properties: z.optional(z.object({}).passthrough()),
+    required: z.optional(z.array(z.string()))
+  }).passthrough()),
+  /**
+   * Optional additional tool information.
+   */
+  annotations: z.optional(ToolAnnotationsSchema)
 }).passthrough();
 var ListToolsRequestSchema = PaginatedRequestSchema.extend({
   method: z.literal("tools/list")
@@ -4512,10 +4595,59 @@ var ListToolsRequestSchema = PaginatedRequestSchema.extend({
 var ListToolsResultSchema = PaginatedResultSchema.extend({
   tools: z.array(ToolSchema)
 });
-var CallToolResultSchema = ResultSchema.extend({
-  content: z.array(z.union([TextContentSchema, ImageContentSchema, EmbeddedResourceSchema])),
-  isError: z.boolean().default(false).optional()
+var ContentListSchema = z.array(z.union([
+  TextContentSchema,
+  ImageContentSchema,
+  AudioContentSchema,
+  EmbeddedResourceSchema
+]));
+var CallToolUnstructuredResultSchema = ResultSchema.extend({
+  /**
+   * A list of content objects that represent the result of the tool call.
+   *
+   * If the Tool does not define an outputSchema, this field MUST be present in the result.
+   */
+  content: ContentListSchema,
+  /**
+   * Structured output must not be provided in an unstructured tool result.
+   */
+  structuredContent: z.never().optional(),
+  /**
+   * Whether the tool call ended in an error.
+   *
+   * If not set, this is assumed to be false (the call was successful).
+   */
+  isError: z.optional(z.boolean())
 });
+var CallToolStructuredResultSchema = ResultSchema.extend({
+  /**
+   * An object containing structured tool output.
+   *
+   * If the Tool defines an outputSchema, this field MUST be present in the result, and contain a JSON object that matches the schema.
+   */
+  structuredContent: z.object({}).passthrough(),
+  /**
+   * A list of content objects that represent the result of the tool call.
+   *
+   * If the Tool defines an outputSchema, this field MAY be present in the result.
+   *
+   * Tools may use this field to provide compatibility with older clients that
+   * do not support structured content.
+   *
+   * Clients that support structured content should ignore this field.
+   */
+  content: z.optional(ContentListSchema),
+  /**
+   * Whether the tool call ended in an error.
+   *
+   * If not set, this is assumed to be false (the call was successful).
+   */
+  isError: z.optional(z.boolean())
+});
+var CallToolResultSchema = z.union([
+  CallToolUnstructuredResultSchema,
+  CallToolStructuredResultSchema
+]);
 var CompatibilityCallToolResultSchema = CallToolResultSchema.or(ResultSchema.extend({
   toolResult: z.unknown()
 }));
@@ -4591,7 +4723,7 @@ var ModelPreferencesSchema = z.object({
 }).passthrough();
 var SamplingMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
-  content: z.union([TextContentSchema, ImageContentSchema])
+  content: z.union([TextContentSchema, ImageContentSchema, AudioContentSchema])
 }).passthrough();
 var CreateMessageRequestSchema = RequestSchema.extend({
   method: z.literal("sampling/createMessage"),
@@ -4633,7 +4765,8 @@ var CreateMessageResultSchema = ResultSchema.extend({
   role: z.enum(["user", "assistant"]),
   content: z.discriminatedUnion("type", [
     TextContentSchema,
-    ImageContentSchema
+    ImageContentSchema,
+    AudioContentSchema
   ])
 });
 var ResourceReferenceSchema = z.object({
@@ -4761,10 +4894,11 @@ var McpError = class extends Error {
     super(`MCP error ${code}: ${message}`);
     this.code = code;
     this.data = data;
+    this.name = "McpError";
   }
 };
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/shared/protocol.js
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/protocol.js
 var DEFAULT_REQUEST_TIMEOUT_MSEC = 6e4;
 var Protocol = class {
   constructor(_options) {
@@ -4775,6 +4909,7 @@ var Protocol = class {
     this._notificationHandlers = /* @__PURE__ */ new Map();
     this._responseHandlers = /* @__PURE__ */ new Map();
     this._progressHandlers = /* @__PURE__ */ new Map();
+    this._timeoutInfo = /* @__PURE__ */ new Map();
     this.setNotificationHandler(CancelledNotificationSchema, (notification) => {
       const controller = this._requestHandlerAbortControllers.get(notification.params.requestId);
       controller === null || controller === void 0 ? void 0 : controller.abort(notification.params.reason);
@@ -4787,6 +4922,36 @@ var Protocol = class {
       // Automatic pong by default.
       (_request) => ({})
     );
+  }
+  _setupTimeout(messageId, timeout, maxTotalTimeout, onTimeout, resetTimeoutOnProgress = false) {
+    this._timeoutInfo.set(messageId, {
+      timeoutId: setTimeout(onTimeout, timeout),
+      startTime: Date.now(),
+      timeout,
+      maxTotalTimeout,
+      resetTimeoutOnProgress,
+      onTimeout
+    });
+  }
+  _resetTimeout(messageId) {
+    const info = this._timeoutInfo.get(messageId);
+    if (!info)
+      return false;
+    const totalElapsed = Date.now() - info.startTime;
+    if (info.maxTotalTimeout && totalElapsed >= info.maxTotalTimeout) {
+      this._timeoutInfo.delete(messageId);
+      throw new McpError(ErrorCode.RequestTimeout, "Maximum total timeout exceeded", { maxTotalTimeout: info.maxTotalTimeout, totalElapsed });
+    }
+    clearTimeout(info.timeoutId);
+    info.timeoutId = setTimeout(info.onTimeout, info.timeout);
+    return true;
+  }
+  _cleanupTimeout(messageId) {
+    const info = this._timeoutInfo.get(messageId);
+    if (info) {
+      clearTimeout(info.timeoutId);
+      this._timeoutInfo.delete(messageId);
+    }
   }
   /**
    * Attaches to the given transport, starts it, and starts listening for messages.
@@ -4801,13 +4966,15 @@ var Protocol = class {
     this._transport.onerror = (error) => {
       this._onerror(error);
     };
-    this._transport.onmessage = (message) => {
-      if (!("method" in message)) {
+    this._transport.onmessage = (message, extra) => {
+      if (isJSONRPCResponse(message) || isJSONRPCError(message)) {
         this._onresponse(message);
-      } else if ("id" in message) {
-        this._onrequest(message);
-      } else {
+      } else if (isJSONRPCRequest(message)) {
+        this._onrequest(message, extra);
+      } else if (isJSONRPCNotification(message)) {
         this._onnotification(message);
+      } else {
+        this._onerror(new Error(`Unknown message type: ${JSON.stringify(message)}`));
       }
     };
     await this._transport.start();
@@ -4836,8 +5003,8 @@ var Protocol = class {
     }
     Promise.resolve().then(() => handler(notification)).catch((error) => this._onerror(new Error(`Uncaught error in notification handler: ${error}`)));
   }
-  _onrequest(request) {
-    var _a, _b;
+  _onrequest(request, extra) {
+    var _a, _b, _c, _d;
     const handler = (_a = this._requestHandlers.get(request.method)) !== null && _a !== void 0 ? _a : this.fallbackRequestHandler;
     if (handler === void 0) {
       (_b = this._transport) === null || _b === void 0 ? void 0 : _b.send({
@@ -4852,7 +5019,16 @@ var Protocol = class {
     }
     const abortController = new AbortController();
     this._requestHandlerAbortControllers.set(request.id, abortController);
-    Promise.resolve().then(() => handler(request, { signal: abortController.signal })).then((result) => {
+    const fullExtra = {
+      signal: abortController.signal,
+      sessionId: (_c = this._transport) === null || _c === void 0 ? void 0 : _c.sessionId,
+      _meta: (_d = request.params) === null || _d === void 0 ? void 0 : _d._meta,
+      sendNotification: (notification) => this.notification(notification, { relatedRequestId: request.id }),
+      sendRequest: (r, resultSchema, options) => this.request(r, resultSchema, { ...options, relatedRequestId: request.id }),
+      authInfo: extra === null || extra === void 0 ? void 0 : extra.authInfo,
+      requestId: request.id
+    };
+    Promise.resolve().then(() => handler(request, fullExtra)).then((result) => {
       var _a2;
       if (abortController.signal.aborted) {
         return;
@@ -4880,24 +5056,36 @@ var Protocol = class {
     });
   }
   _onprogress(notification) {
-    const { progress, total, progressToken } = notification.params;
-    const handler = this._progressHandlers.get(Number(progressToken));
-    if (handler === void 0) {
+    const { progressToken, ...params } = notification.params;
+    const messageId = Number(progressToken);
+    const handler = this._progressHandlers.get(messageId);
+    if (!handler) {
       this._onerror(new Error(`Received a progress notification for an unknown token: ${JSON.stringify(notification)}`));
       return;
     }
-    handler({ progress, total });
+    const responseHandler = this._responseHandlers.get(messageId);
+    const timeoutInfo = this._timeoutInfo.get(messageId);
+    if (timeoutInfo && responseHandler && timeoutInfo.resetTimeoutOnProgress) {
+      try {
+        this._resetTimeout(messageId);
+      } catch (error) {
+        responseHandler(error);
+        return;
+      }
+    }
+    handler(params);
   }
   _onresponse(response) {
-    const messageId = response.id;
-    const handler = this._responseHandlers.get(Number(messageId));
+    const messageId = Number(response.id);
+    const handler = this._responseHandlers.get(messageId);
     if (handler === void 0) {
       this._onerror(new Error(`Received a response for an unknown message ID: ${JSON.stringify(response)}`));
       return;
     }
-    this._responseHandlers.delete(Number(messageId));
-    this._progressHandlers.delete(Number(messageId));
-    if ("result" in response) {
+    this._responseHandlers.delete(messageId);
+    this._progressHandlers.delete(messageId);
+    this._cleanupTimeout(messageId);
+    if (isJSONRPCResponse(response)) {
       handler(response);
     } else {
       const error = new McpError(response.error.code, response.error.message, response.error.data);
@@ -4920,8 +5108,9 @@ var Protocol = class {
    * Do not use this method to emit notifications! Use notification() instead.
    */
   request(request, resultSchema, options) {
+    const { relatedRequestId, resumptionToken, onresumptiontoken } = options !== null && options !== void 0 ? options : {};
     return new Promise((resolve, reject) => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e;
       if (!this._transport) {
         reject(new Error("Not connected"));
         return;
@@ -4943,12 +5132,23 @@ var Protocol = class {
           _meta: { progressToken: messageId }
         };
       }
-      let timeoutId = void 0;
+      const cancel = (reason) => {
+        var _a2;
+        this._responseHandlers.delete(messageId);
+        this._progressHandlers.delete(messageId);
+        this._cleanupTimeout(messageId);
+        (_a2 = this._transport) === null || _a2 === void 0 ? void 0 : _a2.send({
+          jsonrpc: "2.0",
+          method: "notifications/cancelled",
+          params: {
+            requestId: messageId,
+            reason: String(reason)
+          }
+        }, { relatedRequestId, resumptionToken, onresumptiontoken }).catch((error) => this._onerror(new Error(`Failed to send cancellation: ${error}`)));
+        reject(reason);
+      };
       this._responseHandlers.set(messageId, (response) => {
         var _a2;
-        if (timeoutId !== void 0) {
-          clearTimeout(timeoutId);
-        }
         if ((_a2 = options === null || options === void 0 ? void 0 : options.signal) === null || _a2 === void 0 ? void 0 : _a2.aborted) {
           return;
         }
@@ -4962,35 +5162,15 @@ var Protocol = class {
           reject(error);
         }
       });
-      const cancel = (reason) => {
-        var _a2;
-        this._responseHandlers.delete(messageId);
-        this._progressHandlers.delete(messageId);
-        (_a2 = this._transport) === null || _a2 === void 0 ? void 0 : _a2.send({
-          jsonrpc: "2.0",
-          method: "cancelled",
-          params: {
-            requestId: messageId,
-            reason: String(reason)
-          }
-        }).catch((error) => this._onerror(new Error(`Failed to send cancellation: ${error}`)));
-        reject(reason);
-      };
       (_c = options === null || options === void 0 ? void 0 : options.signal) === null || _c === void 0 ? void 0 : _c.addEventListener("abort", () => {
         var _a2;
-        if (timeoutId !== void 0) {
-          clearTimeout(timeoutId);
-        }
         cancel((_a2 = options === null || options === void 0 ? void 0 : options.signal) === null || _a2 === void 0 ? void 0 : _a2.reason);
       });
       const timeout = (_d = options === null || options === void 0 ? void 0 : options.timeout) !== null && _d !== void 0 ? _d : DEFAULT_REQUEST_TIMEOUT_MSEC;
-      timeoutId = setTimeout(() => cancel(new McpError(ErrorCode.RequestTimeout, "Request timed out", {
-        timeout
-      })), timeout);
-      this._transport.send(jsonrpcRequest).catch((error) => {
-        if (timeoutId !== void 0) {
-          clearTimeout(timeoutId);
-        }
+      const timeoutHandler = () => cancel(new McpError(ErrorCode.RequestTimeout, "Request timed out", { timeout }));
+      this._setupTimeout(messageId, timeout, options === null || options === void 0 ? void 0 : options.maxTotalTimeout, timeoutHandler, (_e = options === null || options === void 0 ? void 0 : options.resetTimeoutOnProgress) !== null && _e !== void 0 ? _e : false);
+      this._transport.send(jsonrpcRequest, { relatedRequestId, resumptionToken, onresumptiontoken }).catch((error) => {
+        this._cleanupTimeout(messageId);
         reject(error);
       });
     });
@@ -4998,7 +5178,7 @@ var Protocol = class {
   /**
    * Emits a notification, which is a one-way message that does not expect a response.
    */
-  async notification(notification) {
+  async notification(notification, options) {
     if (!this._transport) {
       throw new Error("Not connected");
     }
@@ -5007,7 +5187,7 @@ var Protocol = class {
       ...notification,
       jsonrpc: "2.0"
     };
-    await this._transport.send(jsonrpcNotification);
+    await this._transport.send(jsonrpcNotification, options);
   }
   /**
    * Registers a handler to invoke when this protocol object receives a request with the given method.
@@ -5017,13 +5197,23 @@ var Protocol = class {
   setRequestHandler(requestSchema, handler) {
     const method = requestSchema.shape.method.value;
     this.assertRequestHandlerCapability(method);
-    this._requestHandlers.set(method, (request, extra) => Promise.resolve(handler(requestSchema.parse(request), extra)));
+    this._requestHandlers.set(method, (request, extra) => {
+      return Promise.resolve(handler(requestSchema.parse(request), extra));
+    });
   }
   /**
    * Removes the request handler for the given method.
    */
   removeRequestHandler(method) {
     this._requestHandlers.delete(method);
+  }
+  /**
+   * Asserts that a request handler has not already been set for the given method, in preparation for a new one being automatically installed.
+   */
+  assertCanSetRequestHandler(method) {
+    if (this._requestHandlers.has(method)) {
+      throw new Error(`A request handler for ${method} already exists, which would be overridden`);
+    }
   }
   /**
    * Registers a handler to invoke when this protocol object receives a notification with the given method.
@@ -5040,21 +5230,44 @@ var Protocol = class {
     this._notificationHandlers.delete(method);
   }
 };
+function mergeCapabilities(base, additional) {
+  return Object.entries(additional).reduce((acc, [key, value]) => {
+    if (value && typeof value === "object") {
+      acc[key] = acc[key] ? { ...acc[key], ...value } : value;
+    } else {
+      acc[key] = value;
+    }
+    return acc;
+  }, { ...base });
+}
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/server/index.js
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/server/index.js
 var Server = class extends Protocol {
   /**
    * Initializes this server with the given name and version information.
    */
   constructor(_serverInfo, options) {
+    var _a;
     super(options);
     this._serverInfo = _serverInfo;
-    this._capabilities = options.capabilities;
+    this._capabilities = (_a = options === null || options === void 0 ? void 0 : options.capabilities) !== null && _a !== void 0 ? _a : {};
+    this._instructions = options === null || options === void 0 ? void 0 : options.instructions;
     this.setRequestHandler(InitializeRequestSchema, (request) => this._oninitialize(request));
     this.setNotificationHandler(InitializedNotificationSchema, () => {
-      var _a;
-      return (_a = this.oninitialized) === null || _a === void 0 ? void 0 : _a.call(this);
+      var _a2;
+      return (_a2 = this.oninitialized) === null || _a2 === void 0 ? void 0 : _a2.call(this);
     });
+  }
+  /**
+   * Registers new capabilities. This can only be called before connecting to a transport.
+   *
+   * The new capabilities will be merged with any existing capabilities previously given (e.g., at initialization).
+   */
+  registerCapabilities(capabilities) {
+    if (this.transport) {
+      throw new Error("Cannot register capabilities after connecting to transport");
+    }
+    this._capabilities = mergeCapabilities(this._capabilities, capabilities);
   }
   assertCapabilityForMethod(method) {
     var _a, _b;
@@ -5145,7 +5358,8 @@ var Server = class extends Protocol {
     return {
       protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion) ? requestedVersion : LATEST_PROTOCOL_VERSION,
       capabilities: this.getCapabilities(),
-      serverInfo: this._serverInfo
+      serverInfo: this._serverInfo,
+      ...this._instructions && { instructions: this._instructions }
     };
   }
   /**
@@ -5194,10 +5408,10 @@ var Server = class extends Protocol {
   }
 };
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/server/stdio.js
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 import process2 from "node:process";
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/shared/stdio.js
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/shared/stdio.js
 var ReadBuffer = class {
   append(chunk) {
     this._buffer = this._buffer ? Buffer.concat([this._buffer, chunk]) : chunk;
@@ -5210,7 +5424,7 @@ var ReadBuffer = class {
     if (index === -1) {
       return null;
     }
-    const line = this._buffer.toString("utf8", 0, index);
+    const line = this._buffer.toString("utf8", 0, index).replace(/\r$/, "");
     this._buffer = this._buffer.subarray(index + 1);
     return deserializeMessage(line);
   }
@@ -5225,7 +5439,7 @@ function serializeMessage(message) {
   return JSON.stringify(message) + "\n";
 }
 
-// ../node_modules/.pnpm/@modelcontextprotocol+sdk@0.6.0/node_modules/@modelcontextprotocol/sdk/dist/server/stdio.js
+// ../node_modules/.pnpm/@modelcontextprotocol+sdk@1.11.4/node_modules/@modelcontextprotocol/sdk/dist/esm/server/stdio.js
 var StdioServerTransport = class {
   constructor(_stdin = process2.stdin, _stdout = process2.stdout) {
     this._stdin = _stdin;
@@ -5270,6 +5484,10 @@ var StdioServerTransport = class {
     var _a;
     this._stdin.off("data", this._ondata);
     this._stdin.off("error", this._onerror);
+    const remainingDataListeners = this._stdin.listenerCount("data");
+    if (remainingDataListeners === 0) {
+      this._stdin.pause();
+    }
     this._readBuffer.clear();
     (_a = this.onclose) === null || _a === void 0 ? void 0 : _a.call(this);
   }
@@ -5315,6 +5533,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: {
           type: "object"
         }
+      },
+      {
+        name: "update_note_text_content",
+        description: "Update the title and/or details of a note by note ID. At least one of newTitle or newDetails must be provided.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            noteId: {
+              type: "integer",
+              description: "The ID of the note to update."
+            },
+            newTitle: {
+              type: "string",
+              description: "The new title for the note.",
+              nullable: true
+            },
+            newDetails: {
+              type: "string",
+              description: "The new details for the note.",
+              nullable: true
+            },
+            authToken: {
+              type: "string",
+              description: "Bearer token for authentication."
+            }
+          },
+          required: ["noteId", "authToken"]
+        }
+      },
+      {
+        name: "get_user_info",
+        description: "Get user info",
+        inputSchema: {
+          type: "object"
+        }
+      },
+      {
+        name: "get_notebook_list",
+        description: "Get notebook list (Not ready for use)",
+        inputSchema: {
+          type: "object"
+        }
       }
     ]
   };
@@ -5340,6 +5600,124 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         ]
       };
+    }
+    case "update_note_text_content": {
+      const { noteId, newTitle, newDetails, authToken } = request.params.input;
+      if (typeof newTitle !== "string" && typeof newDetails !== "string") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "At least one of newTitle or newDetails must be provided."
+            }
+          ]
+        };
+      }
+      let titleResult = null;
+      let detailsResult = null;
+      if (typeof newTitle === "string") {
+        const titleResponse = await fetch(
+          `http://localhost:9081/api/text_content/${noteId}/title`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ newTitle })
+          }
+        );
+        if (!titleResponse.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to update note title: ${titleResponse.status} ${await titleResponse.text()}`
+              }
+            ]
+          };
+        }
+        titleResult = await titleResponse.json();
+      }
+      if (typeof newDetails === "string") {
+        const detailsResponse = await fetch(
+          `http://localhost:9081/api/text_content/${noteId}/details`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ details: newDetails })
+          }
+        );
+        if (!detailsResponse.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Failed to update note details: ${detailsResponse.status} ${await detailsResponse.text()}`
+              }
+            ]
+          };
+        }
+        detailsResult = await detailsResponse.json();
+      }
+      let msg = "Note updated successfully.";
+      if (titleResult && titleResult.note && titleResult.note.topicConstructor) {
+        msg += ` Title: ${titleResult.note.topicConstructor}.`;
+      }
+      if (detailsResult && detailsResult.note && detailsResult.note.details) {
+        msg += ` Details: ${detailsResult.note.details}.`;
+      }
+      return {
+        content: [
+          {
+            type: "text",
+            text: msg
+          }
+        ]
+      };
+    }
+    case "get_notebook_list": {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "Lord of the Rings, Harry Potter"
+          }
+        ]
+      };
+    }
+    case "get_user_info": {
+      const mcpToken = `${request.params.mcpToken}`;
+      const apiUrl = `${request.params.baseUrl}/api/user/info`;
+      try {
+        const response = await fetch(apiUrl, {
+          method: "GET",
+          headers: {
+            mcpToken
+          }
+        });
+        const text = await response.text();
+        return {
+          content: [
+            {
+              type: "text",
+              text
+            }
+          ]
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: `ERROR: ${err.message}`
+            }
+          ]
+        };
+      }
     }
     default:
       throw new Error("Unknown tool");

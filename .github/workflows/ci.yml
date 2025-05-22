@@ -86,8 +86,8 @@ jobs:
         with:
           node_version: ${{ vars.NODE_VERSION }}
           pnpm_version: ${{ vars.PNPM_VERSION }}
-      - name: Compile & transform frontend assets for bundling with Backend
-        run: pnpm frontend:build
+      - name: Bundle MCP server & Compile & transform frontend assets for bundling with Backend
+        run: pnpm bundle:all
       - name: Build application jar artifact
         run: backend/gradlew -p backend build -x test -Dspring.profiles.active=prod --build-cache --parallel
       - uses: actions/upload-artifact@v4
@@ -146,7 +146,7 @@ jobs:
         with:
           browser: chrome
           config-file: e2e_test/config/ci.ts
-          build: pnpm frontend:build
+          build: pnpm bundle:all
           start: pnpm run-p -clnr sut start:mb
           wait-on: "http://127.0.0.1:9081/api/healthcheck"
           wait-on-timeout: 150

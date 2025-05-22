@@ -10,6 +10,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js'
+import type { NoteUpdateResult } from './types.js'
 
 /**
  * Create an MCP server to connect to Doughnut server
@@ -49,9 +50,62 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: 'object',
         },
       },
+      {
+        name: 'update_note_text_content',
+        description:
+          'Update the title and/or details of a note by note ID. At least one of newTitle or newDetails must be provided. Authentication token is taken from the DOUGHNUT_API_AUTH_TOKEN environment variable.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            noteId: {
+              type: 'integer',
+              description: 'The ID of the note to update.',
+            },
+            newTitle: {
+              type: 'string',
+              description: 'The new title for the note.',
+              nullable: true,
+            },
+            newDetails: {
+              type: 'string',
+              description: 'The new details for the note.',
+              nullable: true,
+            },
+          },
+          required: ['noteId'],
+        },
+      },
+      {
+        name: 'get_user_info',
+        description: 'Get user info',
+        inputSchema: {
+          type: 'object',
+        },
+      },
+      {
+        name: 'get_notebook_list',
+        description: 'Get notebook list (Not ready for use)',
+        inputSchema: {
+          type: 'object',
+        },
+      },
+      {
+        name: 'get_graph_with_note_id',
+        description: 'Get graph with note id',
+        inputSchema: {
+          type: 'object',
+        },
+      },
     ],
   }
 })
+
+/**
+ * Get Doughnut API base URL from environment or use default.
+ */
+const DOUGHNUT_API_BASE_URL =
+  process.env.DOUGHNUT_API_BASE_URL || 'http://localhost:9081'
+const authToken = process.env.DOUGHNUT_API_AUTH_TOKEN
 
 /**
  * Handler for the create_note tool.
@@ -77,6 +131,175 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: 'Sample API',
           },
         ],
+      }
+    }
+    case 'update_note_text_content': {
+      const { noteId, newTitle, newDetails } = request.params.input as {
+        noteId: number
+        newTitle?: string | null
+        newDetails?: string | null
+      }
+      // Always use authToken from environment variable
+      if (!authToken) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'DOUGHNUT_API_AUTH_TOKEN environment variable is required.',
+            },
+          ],
+        }
+      }
+      if (typeof newTitle !== 'string' && typeof newDetails !== 'string') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'At least one of newTitle or newDetails must be provided.',
+            },
+          ],
+        }
+      }
+      let titleResult: NoteUpdateResult | null = null
+      let detailsResult: NoteUpdateResult | null = null
+      // Update title if provided
+      if (typeof newTitle === 'string') {
+        const titleResponse = await fetch(
+          `${DOUGHNUT_API_BASE_URL}/api/text_content/${noteId}/title`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ newTitle }),
+          }
+        )
+        if (!titleResponse.ok) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Failed to update note title: ${titleResponse.status} ${await titleResponse.text()}`,
+              },
+            ],
+          }
+        }
+        titleResult = await titleResponse.json()
+      }
+      // Update details if provided
+      if (typeof newDetails === 'string') {
+        const detailsResponse = await fetch(
+          `${DOUGHNUT_API_BASE_URL}/api/text_content/${noteId}/details`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ details: newDetails }),
+          }
+        )
+        if (!detailsResponse.ok) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Failed to update note details: ${detailsResponse.status} ${await detailsResponse.text()}`,
+              },
+            ],
+          }
+        }
+        detailsResult = await detailsResponse.json()
+      }
+      // Compose result message
+      let msg = 'Note updated successfully.'
+      if (
+        titleResult &&
+        titleResult.note &&
+        titleResult.note.topicConstructor
+      ) {
+        msg += ` Title: ${titleResult.note.topicConstructor}.`
+      }
+      if (detailsResult && detailsResult.note && detailsResult.note.details) {
+        msg += ` Details: ${detailsResult.note.details}.`
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: msg,
+          },
+        ],
+      }
+    }
+    case 'get_notebook_list': {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: 'Lord of the Rings, Harry Potter',
+          },
+        ],
+      }
+    }
+    case 'get_user_info': {
+      const mcpToken = `${request.params.mcpToken}`
+      const apiUrl = `${request.params.baseUrl}/api/user/info`
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+          headers: {
+            mcpToken: mcpToken,
+          },
+        })
+        const text = await response.text()
+        return {
+          content: [
+            {
+              type: 'text',
+              text,
+            },
+          ],
+        }
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `ERROR: ${err.message}`,
+            },
+          ],
+        }
+      }
+    }
+
+    case 'get_graph_with_note_id': {
+      const apiUrl = `${request.params.baseUrl}/api/notes/${request.params.noteId}/graph`
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'GET',
+        })
+        const json = await response.json()
+        return {
+          content: [
+            {
+              type: 'json',
+              json: json,
+            },
+          ],
+        }
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: 'json',
+              json: `ERROR: ${err.message}`,
+            },
+          ],
+        }
       }
     }
 

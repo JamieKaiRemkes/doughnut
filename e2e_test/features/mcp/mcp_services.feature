@@ -16,12 +16,12 @@ Feature: MCP (Model Context Protocol) Services
       | api_name        | expected_response                               |
       | get_instruction  | Doughnut is a Personal Knowledge Management tool |
 
-  @ignore
-  Scenario: Get notebook list
+    @ignore
+    Scenario: Get notebook list
     Given I have a notebook with the head note "Lord of the Rings"
     And I have a notebook with the head note "Harry Potter"
-    When I request MCP server to get the notebook list
-    Then I should receive a list of notebooks in the MCP response: "Lord of the Rings, Harry Potter"
+    When I call the "get_notebook_list" MCP tool
+    Then I should receive a list of notebooks in the MCP response contain "Lord of the Rings, Harry Potter"
 
   @ignore
   Scenario Outline: Update note title/detail
@@ -31,5 +31,23 @@ Feature: MCP (Model Context Protocol) Services
 
     Examples:
       | api_name | note_it | new_title | expected_response |
-      | update_note_title_and_details | n12345 | Cat | Note updated successfully |
-      | update_note_title_and_details | n12346 | Cat | Failed to update note |
+      | update_note_text_content | n12345 | Cat | Note updated successfully. |
+      | update_note_text_content | n12346 | Cat | Failed to update note |
+
+  Scenario Outline: Retrieve basic user information
+    When call Mcp server get_user_info API
+    Then the response should return user name contain "<userName>"
+
+    Examples:
+      | userName    |
+      | Old Learner |
+
+  @ignore
+  Scenario Outline: Retrieve graph with note id
+    When the client requests read note with graph from "<noteId>" via MCP service
+    Then the response should return a json object contain "<expected_response>"
+    #And the json is correctly formatted
+
+    Examples:
+      | noteId      | expected_response                               |
+      | 100   | blank                               |
